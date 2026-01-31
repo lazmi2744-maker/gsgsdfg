@@ -3,226 +3,244 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Petal Pounce | Pixel Nature</title>
+    <title>Glow-Pop | Neon Slasher</title>
     <style>
-        /* This CSS makes everything look like Retro Pixels */
-        canvas { 
-            display: block; 
-            margin: 0 auto; 
-            background: #87CEEB; 
-            image-rendering: pixelated; 
-            width: 100vw; 
-            height: 100vh;
-            touch-action: none;
-        }
-        body { margin: 0; background: #333; overflow: hidden; font-family: 'Courier New', Courier, monospace; }
+        body { margin: 0; overflow: hidden; background: #0a0a0a; font-family: 'Segoe UI', sans-serif; }
+        canvas { display: block; touch-action: none; }
         
         #ui {
-            position: absolute; top: 10px; left: 10px; color: white;
-            pointer-events: none; text-shadow: 2px 2px 0px #000;
-            font-size: 18px; z-index: 5;
+            position: absolute; top: 20px; left: 20px; color: #bc13fe;
+            pointer-events: none; text-shadow: 0 0 10px #bc13fe;
+            font-size: 24px; font-weight: bold;
         }
 
         #overlay {
-            position: absolute; inset: 0; background: rgba(135, 206, 235, 0.8);
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            z-index: 10; text-align: center;
+            position: absolute; inset: 0; background: rgba(0,0,0,0.85);
+            display: flex; flex-direction: column; align-items: center; 
+            justify-content: center; z-index: 10; color: white; text-align: center;
         }
 
-        .pixel-btn {
-            background: #ffcc00; border: 4px solid #000; padding: 10px 20px;
-            font-size: 20px; cursor: pointer; box-shadow: 4px 4px 0px #000;
+        .btn {
+            background: #bc13fe; color: white; border: none; padding: 15px 40px;
+            font-size: 20px; border-radius: 5px; cursor: pointer; margin-top: 20px;
+            box-shadow: 0 0 15px #bc13fe; transition: 0.2s;
         }
-        .pixel-btn:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0px #000; }
+        .btn:hover { transform: scale(1.1); box-shadow: 0 0 25px #bc13fe; }
+
+        .kiss { font-size: 100px; animation: pulse 0.8s infinite; }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+            100% { transform: scale(1); }
+        }
     </style>
 </head>
 <body>
 
-<div id="ui">
-    <div id="hearts">❤❤❤</div>
-    <div id="score">PETALS: 0</div>
-</div>
+<div id="ui">SCORE: <span id="score">0</span></div>
 
 <div id="overlay">
-    <h1 style="color: #fff; text-shadow: 4px 4px 0px #000; font-size: 40px;">PETAL POUNCE</h1>
-    <p style="font-weight: bold;">Jump on Clouds! Collect Flowers!</p>
-    <button class="pixel-btn" onclick="startGame()">START HOPPING</button>
+    <h1 style="font-size: 45px; margin: 0; letter-spacing: 5px;">GLOW-POP</h1>
+    <p>Swipe to slash the Purple Orbs! Avoid the Red Bombs!</p>
+    <button class="btn" onclick="startGame()">START SLASHING</button>
 </div>
 
 <canvas id="gameCanvas"></canvas>
 
 <script>
-/** * PETAL POUNCE - PIXEL ENGINE
- * Low-res canvas scaled up creates the pixel art look
- */
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const scoreEl = document.getElementById('score');
-const heartsEl = document.getElementById('hearts');
 const overlay = document.getElementById('overlay');
-
-// Internal resolution for pixel look
-const GAME_W = 320;
-const GAME_H = 480;
-canvas.width = GAME_W;
-canvas.height = GAME_H;
 
 let gameActive = false;
 let score = 0;
-let health = 3;
-let frame = 0;
+let targets = [];
+let particles = [];
+let bladeTrail = [];
+const winGoal = 3000;
 
-const player = {
-    x: 140, y: 300, w: 24, h: 20,
-    vx: 0, vy: 0,
-    jump: -8, gravity: 0.4,
-    grounded: false
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// Input Tracking
+let isDrawing = false;
+const handleMove = (e) => {
+    if (!gameActive) return;
+    const x = e.touches ? e.touches[0].clientX : e.clientX;
+    const y = e.touches ? e.touches[0].clientY : e.clientY;
+    
+    if (isDrawing) {
+        bladeTrail.push({ x, y, life: 10 });
+        checkSlash(x, y);
+    }
 };
 
-let clouds = [];
-let flowers = [];
-let storms = [];
+window.addEventListener('mousedown', () => isDrawing = true);
+window.addEventListener('mouseup', () => { isDrawing = false; bladeTrail = []; });
+window.addEventListener('mousemove', handleMove);
+window.addEventListener('touchstart', (e) => { isDrawing = true; handleMove(e); });
+window.addEventListener('touchend', () => { isDrawing = false; bladeTrail = []; });
+window.addEventListener('touchmove', (e) => { e.preventDefault(); handleMove(e); }, {passive: false});
 
-function startGame() {
-    score = 0; health = 3; frame = 0;
-    clouds = []; flowers = []; storms = [];
-    player.x = 140; player.y = 300; player.vy = 0;
-    
-    // Starting platforms
-    for(let i=0; i<6; i++) {
-        clouds.push({ x: Math.random()*240, y: i*80 + 50, w: 60, h: 16 });
-    }
-    
-    gameActive = true;
-    overlay.style.display = 'none';
-    updateUI();
+function spawnTarget() {
+    if (!gameActive) return;
+    const isBomb = Math.random() < 0.2;
+    targets.push({
+        x: Math.random() * (canvas.width - 100) + 50,
+        y: canvas.height + 50,
+        vx: (Math.random() - 0.5) * 4,
+        vy: -(Math.random() * 5 + 12),
+        radius: isBomb ? 25 : 35,
+        isBomb: isBomb,
+        angle: 0,
+        rotation: (Math.random() - 0.5) * 0.2
+    });
+    setTimeout(spawnTarget, Math.max(400, 1000 - (score/10)));
 }
 
-// Controls
-let moveX = 0;
-window.addEventListener('keydown', e => {
-    if(e.code === 'ArrowLeft') moveX = -3;
-    if(e.code === 'ArrowRight') moveX = 3;
-});
-window.addEventListener('keyup', () => moveX = 0);
+function checkSlash(sx, sy) {
+    targets.forEach((t, i) => {
+        const dist = Math.hypot(sx - t.x, sy - t.y);
+        if (dist < t.radius) {
+            if (t.isBomb) {
+                gameOver();
+            } else {
+                popTarget(t, i);
+            }
+        }
+    });
+}
 
-// Mobile Touch
-window.addEventListener('touchstart', e => {
-    const touchX = e.touches[0].clientX;
-    if(touchX < window.innerWidth/2) moveX = -3;
-    else moveX = 3;
-});
-window.addEventListener('touchend', () => moveX = 0);
+function popTarget(t, index) {
+    score += 100;
+    scoreEl.innerText = score;
+    // Create Explosion Particles
+    for (let i = 0; i < 12; i++) {
+        particles.push({
+            x: t.x, y: t.y,
+            vx: (Math.random() - 0.5) * 10,
+            vy: (Math.random() - 0.5) * 10,
+            life: 1.0,
+            color: '#bc13fe'
+        });
+    }
+    targets.splice(index, 1);
+    if (score >= winGoal) winGame();
+}
 
-function updateUI() {
-    scoreEl.innerText = `PETALS: ${score}`;
-    heartsEl.innerText = "❤".repeat(health);
+function startGame() {
+    score = 0; targets = []; particles = []; bladeTrail = [];
+    scoreEl.innerText = score;
+    gameActive = true;
+    overlay.style.display = 'none';
+    spawnTarget();
 }
 
 function update() {
-    if(!gameActive) return;
-    frame++;
+    if (!gameActive) return;
 
-    // Player Physics
-    player.vy += player.gravity;
-    player.x += moveX;
-    player.y += player.vy;
-
-    // Boundary
-    if(player.x < 0) player.x = GAME_W;
-    if(player.x > GAME_W) player.x = 0;
-
-    // Platform Collision (Pixel Style)
-    player.grounded = false;
-    clouds.forEach(c => {
-        if(player.vy > 0 && player.x + player.w > c.x && player.x < c.x + c.w &&
-           player.y + player.h > c.y && player.y + player.h < c.y + c.h + player.vy) {
-            player.vy = player.jump;
-        }
-        c.y += 1; // Clouds move down
-        if(c.y > GAME_H) {
-            c.y = 0;
-            c.x = Math.random() * (GAME_W - 60);
-        }
+    targets.forEach((t, i) => {
+        t.x += t.vx;
+        t.y += t.vy;
+        t.vy += 0.2; // Gravity
+        t.angle += t.rotation;
+        if (t.y > canvas.height + 100) targets.splice(i, 1);
     });
 
-    // Items Spawn
-    if(frame % 100 === 0) {
-        flowers.push({ x: Math.random()*GAME_W, y: -20, type: Math.random() > 0.5 ? '🌻' : '🌼' });
-    }
-    if(frame % 250 === 0) {
-        storms.push({ x: Math.random()*GAME_W, y: -20 });
-    }
-
-    // Flower Collection
-    flowers.forEach((f, i) => {
-        f.y += 2;
-        if(Math.hypot(player.x - f.x, player.y - f.y) < 20) {
-            flowers.splice(i, 1);
-            score += 50;
-            updateUI();
-        }
+    particles.forEach((p, i) => {
+        p.x += p.vx; p.y += p.vy; p.life -= 0.02;
+        if (p.life <= 0) particles.splice(i, 1);
     });
 
-    // Storm Damage
-    storms.forEach((s, i) => {
-        s.y += 3;
-        if(Math.hypot(player.x - s.x, player.y - s.y) < 20) {
-            storms.splice(i, 1);
-            health--;
-            updateUI();
-            if(health <= 0) endGame(false);
-        }
+    bladeTrail.forEach((b, i) => {
+        b.life--;
+        if (b.life <= 0) bladeTrail.splice(i, 1);
     });
-
-    if(player.y > GAME_H) endGame(false);
-    if(score >= 1000) endGame(true);
 }
 
 function draw() {
-    ctx.clearRect(0, 0, GAME_W, GAME_H);
+    ctx.fillStyle = 'rgba(10, 10, 10, 0.4)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Pixel Clouds
-    ctx.fillStyle = "white";
-    clouds.forEach(c => {
-        ctx.fillRect(c.x, c.y, c.w, c.h);
-        ctx.fillRect(c.x + 10, c.y - 5, c.w - 20, 5); // Simple cloud shape
+    // Draw Blade
+    if (bladeTrail.length > 1) {
+        ctx.beginPath();
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 4;
+        ctx.lineJoin = 'round';
+        ctx.moveTo(bladeTrail[0].x, bladeTrail[0].y);
+        for (let i = 1; i < bladeTrail.length; i++) {
+            ctx.lineTo(bladeTrail[i].x, bladeTrail[i].y);
+        }
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = '#bc13fe';
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+    }
+
+    // Draw Targets
+    targets.forEach(t => {
+        ctx.save();
+        ctx.translate(t.x, t.y);
+        ctx.rotate(t.angle);
+        if (t.isBomb) {
+            ctx.fillStyle = '#ff0000';
+            ctx.beginPath();
+            ctx.moveTo(0, -t.radius);
+            ctx.lineTo(t.radius, t.radius);
+            ctx.lineTo(-t.radius, t.radius);
+            ctx.closePath();
+            ctx.fill();
+            ctx.fillStyle = 'black';
+            ctx.fillText('⚡', -8, 15);
+        } else {
+            ctx.shadowBlur = 20;
+            ctx.shadowColor = '#bc13fe';
+            ctx.fillStyle = '#bc13fe';
+            ctx.beginPath();
+            ctx.arc(0, 0, t.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.fillStyle = 'white';
+            ctx.font = '20px Arial';
+            ctx.fillText('💎', -10, 7);
+        }
+        ctx.restore();
     });
 
-    // Pixel Flowers
-    ctx.font = "20px Arial";
-    flowers.forEach(f => ctx.fillText(f.type, f.x, f.y));
-
-    // Pixel Storms
-    storms.forEach(s => ctx.fillText('☁️⚡', s.x, s.y));
-
-    // Pixel Bunny (Player)
-    ctx.fillStyle = "#8a2be2"; // Purple Bunny
-    ctx.fillRect(player.x, player.y, player.w, player.h);
-    ctx.fillStyle = "white";
-    ctx.fillRect(player.x + 15, player.y + 4, 4, 4); // Eye
-    ctx.fillStyle = "#ff69b4";
-    ctx.fillRect(player.x - 4, player.y - 10, 6, 15); // Ear 1
-    ctx.fillRect(player.x + 4, player.y - 10, 6, 15); // Ear 2
+    // Draw Particles
+    particles.forEach(p => {
+        ctx.globalAlpha = p.life;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+    });
+    ctx.globalAlpha = 1;
 }
 
-function endGame(win) {
+function gameOver() {
     gameActive = false;
     overlay.style.display = 'flex';
-    if(win) {
-        overlay.innerHTML = `
-            <h1 style="color: #ff69b4;">YOU WON!</h1>
-            <div style="font-size: 80px;">💋</div>
-            <p>Nature loves you! Here is your smooch.</p>
-            <button class="pixel-btn" onclick="startGame()">PLAY AGAIN</button>
-        `;
-    } else {
-        overlay.innerHTML = `
-            <h1>OH NO!</h1>
-            <p>The bunny fell or got struck!</p>
-            <button class="pixel-btn" onclick="startGame()">TRY AGAIN</button>
-        `;
-    }
+    overlay.innerHTML = `<h1>VOID BOMB DETONATED</h1><p>Score: ${score}</p><button class="btn" onclick="startGame()">REBOOT</button>`;
+}
+
+function winGame() {
+    gameActive = false;
+    overlay.style.display = 'flex';
+    overlay.innerHTML = `
+        <h1 style="color: #bc13fe;">NEON MASTER!</h1>
+        <div class="kiss">💋</div>
+        <p>Perfect Slicing! Here is your reward!</p>
+        <button class="btn" onclick="startGame()">PLAY AGAIN</button>
+    `;
 }
 
 function loop() {
